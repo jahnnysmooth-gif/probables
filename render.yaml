@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: streaming-bot
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt --break-system-packages
+    startCommand: python streaming_bot.py
+    envVars:
+      - key: STREAMING_BOT_TOKEN
+        sync: false
+      - key: STREAMING_CHANNEL_ID
+        sync: false
+      - key: STREAMING_BOT_SUMMARY
+        sync: false
+      - key: OWNERSHIP_THRESHOLD
+        value: "60.0"
+      - key: ESPN_PLAYER_IDS_PATH
+        value: "/home/claude/espn_player_ids.json"
+      - key: RESET_STREAMING_STATE
+        value: "false"

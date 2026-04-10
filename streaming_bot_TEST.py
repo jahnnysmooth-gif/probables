@@ -1,10 +1,10 @@
 """
-Streaming Bot v2.0 - Complete Fantasy Baseball Streamer Scout
-Full-featured day-one deployment with Statcast, weather, lineup analysis, and AI summaries
+Streaming Bot v2.0 - TEST VERSION
+Runs immediately on startup for testing
 """
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 import os
 import aiohttp
 import asyncio
@@ -41,7 +41,7 @@ http_session = None
 # ESPN player ID mapping
 espn_player_map = {}
 
-# Statcast cache (daily refresh)
+# Statcast cache
 statcast_cache = {}
 statcast_cache_date = None
 
@@ -86,28 +86,30 @@ def load_espn_player_ids():
         if os.path.exists(ESPN_PLAYER_IDS_PATH):
             with open(ESPN_PLAYER_IDS_PATH, 'r') as f:
                 espn_player_map = json.load(f)
-            print(f"Loaded {len(espn_player_map)} ESPN player IDs")
+            print(f"✅ Loaded {len(espn_player_map)} ESPN player IDs")
+        else:
+            print(f"⚠️  ESPN player ID file not found at {ESPN_PLAYER_IDS_PATH}")
     except Exception as e:
-        print(f"Error loading ESPN player IDs: {e}")
+        print(f"❌ Error loading ESPN player IDs: {e}")
 
 
 async def refresh_statcast_cache():
-    """Refresh Statcast data cache daily"""
+    """Refresh Statcast data cache"""
     global statcast_cache, statcast_cache_date
     
     try:
         today = datetime.now(pytz.timezone('America/New_York')).date()
         
         if statcast_cache_date == today and statcast_cache:
-            return  # Already cached today
+            print("✅ Statcast cache already fresh")
+            return
         
-        print("Refreshing Statcast cache...")
+        print("🔄 Refreshing Statcast cache...")
         
         # Get season pitching stats with Statcast metrics
         season_stats = pitching_stats(2026, qual=1)
         
         if season_stats is not None and not season_stats.empty:
-            # Cache by player name
             for _, row in season_stats.iterrows():
                 pitcher_name = row.get('Name', '').strip()
                 if pitcher_name:
@@ -126,10 +128,13 @@ async def refresh_statcast_cache():
                     }
             
             statcast_cache_date = today
-            print(f"Cached Statcast data for {len(statcast_cache)} pitchers")
+            print(f"✅ Cached Statcast data for {len(statcast_cache)} pitchers")
+        else:
+            print("⚠️  Statcast data unavailable (may be offseason or API issue)")
         
     except Exception as e:
-        print(f"Error refreshing Statcast cache: {e}")
+        print(f"⚠️  Error refreshing Statcast cache: {e}")
+        print("   Continuing without Statcast metrics...")
 
 
 async def get_statcast_metrics(pitcher_name):
@@ -164,20 +169,18 @@ async def get_espn_ownership(player_name, mlb_id):
         return None
         
     except Exception as e:
-        print(f"Error fetching ESPN ownership for {player_name}: {e}")
+        print(f"⚠️  Error fetching ESPN ownership for {player_name}: {e}")
         return None
 
 
 async def get_weather(lat, lng, game_datetime):
     """Get weather forecast from Open-Meteo"""
     try:
-        # Parse game datetime
         if isinstance(game_datetime, str):
             game_dt = datetime.fromisoformat(game_datetime.replace('Z', '+00:00'))
         else:
             game_dt = game_datetime
         
-        # Format for API
         date_str = game_dt.strftime('%Y-%m-%d')
         hour = game_dt.hour
         
@@ -198,7 +201,6 @@ async def get_weather(lat, lng, game_datetime):
                 data = await resp.json()
                 hourly = data.get('hourly', {})
                 
-                # Get closest hour
                 temp = hourly['temperature_2m'][hour] if hour < len(hourly['temperature_2m']) else hourly['temperature_2m'][0]
                 wind_speed = hourly['windspeed_10m'][hour] if hour < len(hourly['windspeed_10m']) else hourly['windspeed_10m'][0]
                 wind_dir = hourly['winddirection_10m'][hour] if hour < len(hourly['winddirection_10m']) else hourly['winddirection_10m'][0]
@@ -215,7 +217,7 @@ async def get_weather(lat, lng, game_datetime):
         return None
         
     except Exception as e:
-        print(f"Error fetching weather: {e}")
+        print(f"⚠️  Weather unavailable: {e}")
         return None
 
 
@@ -224,12 +226,10 @@ def get_wind_description(direction, speed):
     if speed < 5:
         return 'calm'
     
-    # Convert degrees to direction
     dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
             'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
     idx = round(direction / 22.5) % 16
     
-    # Interpret for baseball context
     if dirs[idx] in ['S', 'SSW', 'SW']:
         return f'{speed} mph out to CF/LF (hitter boost)'
     elif dirs[idx] in ['N', 'NNW', 'NW']:
@@ -245,7 +245,11 @@ async def get_probable_starters(date_str=None):
             et_tz = pytz.timezone('America/New_York')
             date_str = datetime.now(et_tz).strftime('%Y-%m-%d')
         
+        print(f"🔍 Fetching probable starters for {date_str}...")
         schedule = statsapi.schedule(date=date_str)
+        
+        print(f"📅 Found {len(schedule)} games scheduled")
+        
         probable_starters = []
         
         for game in schedule:
@@ -263,7 +267,6 @@ async def get_probable_starters(date_str=None):
                         pitcher_id = pitcher_data.get('id')
                         pitcher_name = pitcher_data.get('fullName')
                         
-                        # Get pitcher details for handedness
                         person_data = statsapi.get('person', {'personId': pitcher_id})
                         hand_code = person_data.get('people', [{}])[0].get('pitchHand', {}).get('code', 'R')
                         pitcher_hand = 'LHP' if hand_code == 'L' else 'RHP'
@@ -290,41 +293,34 @@ async def get_probable_starters(date_str=None):
                             'game_pk': game_pk
                         })
                         
+                        print(f"   ⚾ {pitcher_name} ({pitcher_hand}) vs {opponent}")
+                        
             except Exception as e:
-                print(f"Error fetching game {game_pk}: {e}")
+                print(f"⚠️  Error fetching game {game_pk}: {e}")
                 continue
         
+        print(f"✅ Found {len(probable_starters)} probable starters")
         return probable_starters
         
     except Exception as e:
-        print(f"Error fetching probable starters: {e}")
+        print(f"❌ Error fetching probable starters: {e}")
         return []
 
 
 async def get_pitcher_stats(pitcher_id, pitcher_name):
-    """Get comprehensive pitcher statistics"""
+    """Get pitcher stats"""
     try:
         season_stats = statsapi.player_stat_data(pitcher_id, group='pitching', type='season')
         game_log = statsapi.player_stat_data(pitcher_id, group='pitching', type='gameLog')
         splits_data = statsapi.player_stat_data(pitcher_id, group='pitching', type='homeAndAway')
         
         stats = {
-            'era': 0.0,
-            'whip': 0.0,
-            'k_per_9': 0.0,
-            'bb_per_9': 0.0,
-            'k_pct': 0.0,
-            'bb_pct': 0.0,
-            'k_bb_pct': 0.0,
-            'ip': 0.0,
-            'games': 0,
-            'recent_starts': [],
-            'home_era': 0.0,
-            'away_era': 0.0,
-            'ip_per_game': 0.0
+            'era': 0.0, 'whip': 0.0, 'k_per_9': 0.0, 'bb_per_9': 0.0,
+            'k_pct': 0.0, 'bb_pct': 0.0, 'k_bb_pct': 0.0,
+            'ip': 0.0, 'games': 0, 'recent_starts': [],
+            'home_era': 0.0, 'away_era': 0.0, 'ip_per_game': 0.0
         }
         
-        # Season stats
         if season_stats and 'stats' in season_stats:
             for stat_group in season_stats['stats']:
                 splits = stat_group.get('splits', [])
@@ -349,7 +345,6 @@ async def get_pitcher_stats(pitcher_id, pitcher_name):
                         stats['bb_pct'] = (bb / bf) * 100
                         stats['k_bb_pct'] = stats['k_pct'] - stats['bb_pct']
         
-        # Recent game logs
         if game_log and 'stats' in game_log:
             for stat_group in game_log['stats']:
                 splits = stat_group.get('splits', [])[:3]
@@ -366,7 +361,6 @@ async def get_pitcher_stats(pitcher_id, pitcher_name):
                         'hr': game_stat.get('homeRuns', 0)
                     })
         
-        # Home/away splits
         if splits_data and 'stats' in splits_data:
             for stat_group in splits_data['stats']:
                 for split in stat_group.get('splits', []):
@@ -380,19 +374,15 @@ async def get_pitcher_stats(pitcher_id, pitcher_name):
         return stats
         
     except Exception as e:
-        print(f"Error fetching pitcher stats for {pitcher_name}: {e}")
+        print(f"⚠️  Error fetching stats for {pitcher_name}: {e}")
         return None
 
 
 async def get_projected_lineup(game_pk, opponent_id):
-    """Get projected lineup for opponent"""
+    """Get projected lineup"""
     try:
         game_data = statsapi.get('game', {'gamePk': game_pk})
-        
-        # Try to get actual lineup from boxscore
         boxscore = game_data.get('liveData', {}).get('boxscore', {})
-        
-        # Determine which team (away or home)
         away_id = game_data.get('gameData', {}).get('teams', {}).get('away', {}).get('id')
         
         team_key = 'away' if away_id == opponent_id else 'home'
@@ -400,9 +390,8 @@ async def get_projected_lineup(game_pk, opponent_id):
         
         lineup_hitters = []
         
-        for player_id in batting_order[:9]:  # Top 9 hitters
+        for player_id in batting_order[:9]:
             try:
-                # Get hitter season stats
                 hitter_stats = statsapi.player_stat_data(player_id, group='hitting', type='season')
                 
                 if hitter_stats and 'stats' in hitter_stats:
@@ -410,7 +399,6 @@ async def get_projected_lineup(game_pk, opponent_id):
                         splits = stat_group.get('splits', [])
                         if splits:
                             stat = splits[0].get('stat', {})
-                            
                             lineup_hitters.append({
                                 'player_id': player_id,
                                 'avg': float(stat.get('avg', 0)),
@@ -424,54 +412,29 @@ async def get_projected_lineup(game_pk, opponent_id):
         return lineup_hitters
         
     except Exception as e:
-        print(f"Error fetching projected lineup: {e}")
         return []
 
 
 async def get_team_vs_handedness(team_id, hand):
-    """Get team offensive stats vs LHP/RHP"""
-    try:
-        # Use MLB Stats API team stats with splits
-        team_stats = statsapi.get('team_stats', {
-            'teamId': team_id,
-            'stats': 'season',
-            'group': 'hitting'
-        })
-        
-        # Parse splits vs LHP/RHP if available
-        # For now, return league average estimates
-        stats = {
-            'wrc_plus': 100,
-            'ops': 0.700,
-            'iso': 0.150,
-            'k_pct': 22.0,
-            'bb_pct': 8.5,
-            'avg': 0.245
-        }
-        
-        return stats
-        
-    except Exception as e:
-        return {
-            'wrc_plus': 100,
-            'ops': 0.700,
-            'iso': 0.150,
-            'k_pct': 22.0,
-            'bb_pct': 8.5,
-            'avg': 0.245
-        }
+    """Get team stats"""
+    return {
+        'wrc_plus': 100,
+        'ops': 0.700,
+        'iso': 0.150,
+        'k_pct': 22.0,
+        'bb_pct': 8.5,
+        'avg': 0.245
+    }
 
 
 async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, opponent_stats, lineup, park_data, weather):
-    """Calculate comprehensive start score"""
+    """Calculate start score"""
     
     score = 0.0
     breakdown = {}
     
-    # 1. Pitcher Skill Bucket (30 points) - now using Statcast metrics
+    # Skill (30)
     skill_score = 0.0
-    
-    # xERA primary (0-10 points)
     xera = statcast_metrics.get('xera', pitcher_stats.get('era', 5.00))
     if xera <= 2.50:
         skill_score += 10
@@ -484,7 +447,6 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         skill_score += max(0, 10 - (xera - 2.5) * 2)
     
-    # K-BB% (0-8 points)
     k_bb_pct = statcast_metrics.get('k_pct', pitcher_stats.get('k_pct', 0)) - statcast_metrics.get('bb_pct', pitcher_stats.get('bb_pct', 0))
     if k_bb_pct >= 20:
         skill_score += 8
@@ -495,10 +457,8 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         skill_score += max(0, k_bb_pct / 5)
     
-    # SwStr% + CSW% (0-7 points)
     swstr = statcast_metrics.get('swstr_pct', 0)
     csw = statcast_metrics.get('csw_pct', 0)
-    
     if swstr >= 13 or csw >= 30:
         skill_score += 7
     elif swstr >= 11 or csw >= 28:
@@ -508,10 +468,8 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         skill_score += max(0, swstr / 2)
     
-    # Hard-hit% + Barrel% (0-5 points)
     hard_hit = statcast_metrics.get('hard_hit_pct', 35)
     barrel = statcast_metrics.get('barrel_pct', 8)
-    
     if hard_hit <= 30 and barrel <= 5:
         skill_score += 5
     elif hard_hit <= 35 and barrel <= 7:
@@ -522,22 +480,21 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     breakdown['skill'] = round(skill_score, 1)
     score += skill_score
     
-    # 2. Recent Form Bucket (20 points)
-    form_score = 0.0
+    # Form (20)
+    form_score = 10
     recent_starts = pitcher_stats.get('recent_starts', [])
-    
     if recent_starts:
-        total_ip = sum(float(start.get('ip', 0)) for start in recent_starts)
-        total_k = sum(int(start.get('k', 0)) for start in recent_starts)
-        total_er = sum(int(start.get('er', 0)) for start in recent_starts)
-        total_bb = sum(int(start.get('bb', 0)) for start in recent_starts)
+        total_ip = sum(float(s.get('ip', 0)) for s in recent_starts)
+        total_k = sum(int(s.get('k', 0)) for s in recent_starts)
+        total_er = sum(int(s.get('er', 0)) for s in recent_starts)
+        total_bb = sum(int(s.get('bb', 0)) for s in recent_starts)
         
         if total_ip > 0:
             recent_era = (total_er * 9) / total_ip
             recent_k_per_9 = (total_k * 9) / total_ip
             recent_bb_per_9 = (total_bb * 9) / total_ip
             
-            # Recent ERA (0-10)
+            form_score = 0
             if recent_era <= 2.50:
                 form_score += 10
             elif recent_era <= 3.50:
@@ -547,7 +504,6 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
             else:
                 form_score += max(0, 10 - (recent_era - 2.5) * 2)
             
-            # K rate (0-5)
             if recent_k_per_9 >= 10:
                 form_score += 5
             elif recent_k_per_9 >= 8:
@@ -555,23 +511,18 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
             else:
                 form_score += max(0, recent_k_per_9 / 2.5)
             
-            # Walk control (0-5)
             if recent_bb_per_9 <= 2.0:
                 form_score += 5
             elif recent_bb_per_9 <= 3.0:
                 form_score += 3
             else:
                 form_score += max(0, 5 - recent_bb_per_9)
-    else:
-        form_score = 10
     
     breakdown['form'] = round(form_score, 1)
     score += form_score
     
-    # 3. Opponent Matchup Bucket (25 points) - expanded with lineup analysis
+    # Matchup (25)
     matchup_score = 0.0
-    
-    # Team stats vs handedness (0-10)
     wrc_plus = opponent_stats.get('wrc_plus', 100)
     if wrc_plus <= 85:
         matchup_score += 10
@@ -584,7 +535,6 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         matchup_score += max(0, 10 - (wrc_plus - 85) / 5)
     
-    # Team K% (0-5)
     k_pct = opponent_stats.get('k_pct', 22.0)
     if k_pct >= 25:
         matchup_score += 5
@@ -595,12 +545,10 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         matchup_score += max(0, k_pct / 6)
     
-    # Lineup danger map (0-10)
     if lineup:
         elite_hitters = sum(1 for h in lineup if h.get('ops', 0) > 0.850)
         high_k_hitters = sum(1 for h in lineup if h.get('k_pct', 0) > 25)
         
-        # Fewer elite hitters = higher score
         if elite_hitters <= 2:
             matchup_score += 5
         elif elite_hitters <= 4:
@@ -608,7 +556,6 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
         elif elite_hitters <= 6:
             matchup_score += 1
         
-        # More K-prone hitters = higher score
         if high_k_hitters >= 4:
             matchup_score += 5
         elif high_k_hitters >= 2:
@@ -616,15 +563,13 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
         elif high_k_hitters >= 1:
             matchup_score += 1
     else:
-        matchup_score += 5  # Neutral if no lineup data
+        matchup_score += 5
     
     breakdown['matchup'] = round(matchup_score, 1)
     score += matchup_score
     
-    # 4. Park/Weather Bucket (15 points) - expanded
+    # Park (15)
     park_score = 0.0
-    
-    # Base park factor (0-10)
     runs_factor = park_data.get('runs', 100)
     if runs_factor <= 94:
         park_score += 10
@@ -637,44 +582,35 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     else:
         park_score += max(0, 10 - (runs_factor - 94) / 2)
     
-    # Weather adjustment (0-5)
     if weather:
         temp = weather.get('temp_f', 70)
         wind_speed = weather.get('wind_speed', 0)
-        
-        # Temperature
         if temp < 60:
-            park_score += 2  # Cold favors pitchers
+            park_score += 2
         elif temp > 85:
-            park_score -= 1  # Hot favors hitters
-        
-        # Wind (simplified - would need direction relative to field)
+            park_score -= 1
         if wind_speed > 15:
-            park_score -= 1  # High wind = unpredictable
+            park_score -= 1
         elif wind_speed < 5:
-            park_score += 1  # Calm = pitcher control
+            park_score += 1
     
     park_score = max(0, min(park_score, 15))
     breakdown['park'] = round(park_score, 1)
     score += park_score
     
-    # 5. Context Bucket (10 points)
+    # Context (10)
     context_score = 0.0
-    
-    # Home/away (0-6)
     if pitcher_data.get('is_home'):
-        # Check if home ERA significantly better
         if pitcher_stats.get('home_era', 0) > 0 and pitcher_stats.get('away_era', 0) > 0:
             if pitcher_stats['home_era'] < pitcher_stats['away_era'] - 0.50:
                 context_score += 6
             else:
                 context_score += 4
         else:
-            context_score += 5  # Default home advantage
+            context_score += 5
     else:
         context_score += 3
     
-    # IP depth (0-4)
     if pitcher_stats.get('ip_per_game', 0) >= 6.0:
         context_score += 4
     elif pitcher_stats.get('ip_per_game', 0) >= 5.5:
@@ -683,12 +619,10 @@ async def calculate_start_score(pitcher_data, pitcher_stats, statcast_metrics, o
     breakdown['context'] = round(context_score, 1)
     score += context_score
     
-    final_score = min(100, round(score, 1))
-    return final_score, breakdown
+    return min(100, round(score, 1)), breakdown
 
 
 def get_streaming_tier(score):
-    """Convert score to streaming tier"""
     if score >= 85:
         return 'Must-Stream', '🔥'
     elif score >= 75:
@@ -702,7 +636,6 @@ def get_streaming_tier(score):
 
 
 def get_league_fit(score):
-    """Get league depth recommendation"""
     if score >= 85:
         return 'Priority in 10-team leagues'
     elif score >= 75:
@@ -716,10 +649,9 @@ def get_league_fit(score):
 
 
 async def generate_ai_summary(pitcher_data, pitcher_stats, statcast_metrics, opponent_stats, lineup, park_data, weather, score, breakdown):
-    """Generate AI summary with full context"""
+    """Generate AI summary"""
     
     try:
-        # Build rich context
         recent_starts_text = ""
         if pitcher_stats.get('recent_starts'):
             for i, start in enumerate(pitcher_stats['recent_starts'][:3], 1):
@@ -786,46 +718,52 @@ Write a 4-6 sentence fantasy streaming analysis in beat-writer prose style. Be s
         return response.content[0].text.strip()
         
     except Exception as e:
-        print(f"Error generating AI summary: {e}")
-        
-        # Fallback
+        print(f"⚠️  AI summary failed, using fallback: {e}")
         tier, _ = get_streaming_tier(score)
         risk = "ratio risk moderate" if score < 70 else "early hook possible"
         return f"{pitcher_data['pitcher_name']} profiles as a {tier.lower()} against {pitcher_data['opponent']}. The matchup shows {breakdown.get('matchup', 0):.0f} points of support, and the park context is {park_data.get('type', 'neutral')}. Risk factor: {risk}."
 
 
 async def post_streaming_board():
-    """Main posting function"""
+    """Main function"""
     try:
-        # Refresh Statcast cache
+        print("\n" + "="*60)
+        print("🚀 STREAMING BOT V2.0 - STARTING TEST RUN")
+        print("="*60 + "\n")
+        
         await refresh_statcast_cache()
         
-        # Get probable starters
         starters = await get_probable_starters()
         
         if not starters:
-            print("No probable starters found")
+            print("❌ No probable starters found - check if games are scheduled today")
             return
         
         viable_streamers = []
         
-        for starter in starters:
-            # Get ownership
+        for i, starter in enumerate(starters, 1):
+            print(f"\n📊 Processing {i}/{len(starters)}: {starter['pitcher_name']}...")
+            
             ownership = await get_espn_ownership(starter['pitcher_name'], starter['pitcher_id'])
             
-            if ownership is None or ownership > OWNERSHIP_THRESHOLD:
+            if ownership is not None:
+                print(f"   Ownership: {ownership}%")
+                if ownership > OWNERSHIP_THRESHOLD:
+                    print(f"   ⏭️  Skipped (over {OWNERSHIP_THRESHOLD}% threshold)")
+                    continue
+            else:
+                print(f"   ⚠️  Ownership unknown, skipping")
                 continue
             
-            # Get all data
             pitcher_stats = await get_pitcher_stats(starter['pitcher_id'], starter['pitcher_name'])
             if not pitcher_stats:
+                print(f"   ⚠️  Stats unavailable, skipping")
                 continue
             
             statcast_metrics = await get_statcast_metrics(starter['pitcher_name'])
             opponent_stats = await get_team_vs_handedness(starter['opponent_id'], starter['pitcher_hand'])
             lineup = await get_projected_lineup(starter['game_pk'], starter['opponent_id'])
             
-            # Get park data
             park_data = None
             for park_name, data in PARK_DATA.items():
                 if park_name.lower() in starter['venue'].lower():
@@ -835,18 +773,17 @@ async def post_streaming_board():
             if not park_data:
                 park_data = {'lat': 0, 'lng': 0, 'runs': 100, 'hr': 100, 'type': 'neutral'}
             
-            # Get weather
             weather = None
             if park_data.get('lat') and park_data.get('lng'):
                 weather = await get_weather(park_data['lat'], park_data['lng'], starter['game_time'])
             
-            # Calculate score
             score, breakdown = await calculate_start_score(
                 starter, pitcher_stats, statcast_metrics, 
                 opponent_stats, lineup, park_data, weather
             )
             
-            # Generate summary
+            print(f"   💯 Start Score: {score}/100")
+            
             summary = await generate_ai_summary(
                 starter, pitcher_stats, statcast_metrics,
                 opponent_stats, lineup, park_data, weather,
@@ -867,38 +804,42 @@ async def post_streaming_board():
                 'ownership': ownership
             })
         
-        # Sort and post
         viable_streamers.sort(key=lambda x: x['score'], reverse=True)
+        
+        print(f"\n{'='*60}")
+        print(f"✅ Found {len(viable_streamers)} streamers under {OWNERSHIP_THRESHOLD}%")
+        print(f"{'='*60}\n")
         
         channel = bot.get_channel(STREAMING_CHANNEL_ID)
         if not channel:
-            print(f"Channel {STREAMING_CHANNEL_ID} not found")
+            print(f"❌ Channel {STREAMING_CHANNEL_ID} not found")
             return
         
-        # Header
         et_tz = pytz.timezone('America/New_York')
         today = datetime.now(et_tz).strftime('%A, %B %d, %Y')
         
         header = discord.Embed(
-            title="📊 Streaming Scout: Today's Board",
-            description=f"{today}\n{len(viable_streamers)} pitchers under {OWNERSHIP_THRESHOLD}% rostered",
+            title="📊 Streaming Scout v2.0: Today's Board",
+            description=f"{today}\n{len(viable_streamers)} pitchers under {OWNERSHIP_THRESHOLD}% rostered\n\n✨ *Full Statcast • Weather • Lineup Analysis*",
             color=0x1E88E5
         )
         await channel.send(embed=header)
         
-        # Post top 10
         for streamer in viable_streamers[:10]:
             await post_streamer_card(channel, streamer)
             await asyncio.sleep(2)
         
-        print(f"Posted {min(len(viable_streamers), 10)} streaming recommendations")
+        print(f"\n✅ Posted {min(len(viable_streamers), 10)} streaming cards to Discord")
+        print(f"{'='*60}\n")
         
     except Exception as e:
-        print(f"Error in post_streaming_board: {e}")
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def post_streamer_card(channel, streamer):
-    """Post individual card"""
+    """Post card"""
     try:
         data = streamer['data']
         stats = streamer['stats']
@@ -920,7 +861,6 @@ async def post_streamer_card(channel, streamer):
             color=get_tier_color(tier)
         )
         
-        # Ownership + venue
         venue_line = f"{data['venue']}\n{park['type']}"
         if weather:
             venue_line += f"\n{weather.get('temp_f', 0)}°F, {weather.get('wind_desc', 'calm')}"
@@ -929,16 +869,13 @@ async def post_streamer_card(channel, streamer):
         embed.add_field(name="🎯 Venue", value=venue_line, inline=True)
         embed.add_field(name="🎯 League Fit", value=league_fit, inline=True)
         
-        # Stats
         stats_line = f"{stats.get('era', 0):.2f} ERA • {stats.get('whip', 0):.2f} WHIP\n{stats.get('k_per_9', 0):.1f} K/9 • {stats.get('k_bb_pct', 0):.1f}% K-BB"
         embed.add_field(name="📊 Season Line", value=stats_line, inline=False)
         
-        # Statcast
         if statcast:
             statcast_line = f"xERA: {statcast.get('xera', 0):.2f} • SwStr: {statcast.get('swstr_pct', 0):.1f}%\nHard-Hit: {statcast.get('hard_hit_pct', 0):.1f}% • Barrel: {statcast.get('barrel_pct', 0):.1f}%"
             embed.add_field(name="⚡ Statcast Profile", value=statcast_line, inline=False)
         
-        # Recent form
         if stats.get('recent_starts'):
             recent = stats['recent_starts']
             total_ip = sum(float(s.get('ip', 0)) for s in recent)
@@ -953,7 +890,6 @@ async def post_streamer_card(channel, streamer):
                     inline=False
                 )
         
-        # Lineup danger
         if lineup:
             elite = [h for h in lineup if h.get('ops', 0) > 0.850]
             k_prone = [h for h in lineup if h.get('k_pct', 0) > 25]
@@ -963,24 +899,21 @@ async def post_streamer_card(channel, streamer):
                 inline=False
             )
         
-        # Score breakdown
         embed.add_field(
             name="📈 Score Breakdown",
             value=f"Skill: {breakdown.get('skill', 0)}/30 • Form: {breakdown.get('form', 0)}/20\nMatchup: {breakdown.get('matchup', 0)}/25 • Park: {breakdown.get('park', 0)}/15",
             inline=False
         )
         
-        # Summary
         embed.add_field(name="💭 Scout's Take", value=summary, inline=False)
         
         await channel.send(embed=embed)
         
     except Exception as e:
-        print(f"Error posting card: {e}")
+        print(f"❌ Error posting card: {e}")
 
 
 def get_tier_color(tier):
-    """Get color for tier"""
     colors = {
         'Must-Stream': 0xFF4444,
         'Strong Stream': 0x44FF44,
@@ -991,16 +924,6 @@ def get_tier_color(tier):
     return colors.get(tier, 0x1E88E5)
 
 
-@tasks.loop(hours=24)
-async def daily_streaming_board():
-    """Daily 8 AM ET posting"""
-    et_tz = pytz.timezone('America/New_York')
-    now = datetime.now(et_tz)
-    
-    if now.hour == 8:
-        await post_streaming_board()
-
-
 @bot.event
 async def on_ready():
     global http_session
@@ -1009,17 +932,19 @@ async def on_ready():
     load_espn_player_ids()
     await bot.change_presence(status=discord.Status.invisible)
     
-    print(f'{bot.user} is now running!')
-    print(f'Streaming channel: {STREAMING_CHANNEL_ID}')
+    print(f'\n✅ {bot.user} is connected!')
+    print(f'📢 Streaming channel: {STREAMING_CHANNEL_ID}\n')
     
-    if not daily_streaming_board.is_running():
-        daily_streaming_board.start()
+    # TEST MODE: Run immediately
+    print("🧪 TEST MODE: Running streaming board immediately...\n")
+    await post_streaming_board()
+    
+    print("\n✅ Test complete! Bot will now stay online for manual !stream commands")
 
 
 @bot.command(name='stream')
 async def manual_stream(ctx):
-    """Manual trigger"""
-    await ctx.send("Generating today's streaming board...")
+    await ctx.send("🔄 Generating streaming board...")
     await post_streaming_board()
 
 
@@ -1031,8 +956,8 @@ async def on_close():
 
 if __name__ == '__main__':
     if not DISCORD_TOKEN:
-        print("Error: STREAMING_BOT_TOKEN not set")
+        print("❌ Error: STREAMING_BOT_TOKEN not set")
     elif STREAMING_CHANNEL_ID == 0:
-        print("Error: STREAMING_CHANNEL_ID not set")
+        print("❌ Error: STREAMING_CHANNEL_ID not set")
     else:
         bot.run(DISCORD_TOKEN)
