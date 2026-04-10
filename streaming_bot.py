@@ -36,6 +36,24 @@ http_session = None
 # ESPN player ID mapping
 espn_player_map = {}
 
+
+async def post_discord_embed(embed_dict):
+    """Post embed to Discord via HTTP API"""
+    url = f'https://discord.com/api/v10/channels/{STREAMING_CHANNEL_ID}/messages'
+    headers = {
+        'Authorization': f'Bot {DISCORD_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    
+    payload = {'embeds': [embed_dict]}
+    
+    async with http_session.post(url, headers=headers, json=payload) as resp:
+        if resp.status != 200:
+            print(f"Error posting to Discord: {resp.status}")
+            text = await resp.text()
+            print(f"Response: {text}")
+        return resp.status == 200
+
 # Statcast cache (daily refresh)
 statcast_cache = {}
 statcast_cache_date = None
@@ -87,44 +105,9 @@ def load_espn_player_ids():
 
 
 async def refresh_statcast_cache():
-    """Refresh Statcast data cache daily"""
-    global statcast_cache, statcast_cache_date
-    
-    try:
-        today = datetime.now(pytz.timezone('America/New_York')).date()
-        
-        if statcast_cache_date == today and statcast_cache:
-            return  # Already cached today
-        
-        print("Refreshing Statcast cache...")
-        
-        # Get season pitching stats with Statcast metrics
-        season_stats = pitching_stats(2026, qual=1)
-        
-        if season_stats is not None and not season_stats.empty:
-            # Cache by player name
-            for _, row in season_stats.iterrows():
-                pitcher_name = row.get('Name', '').strip()
-                if pitcher_name:
-                    statcast_cache[pitcher_name] = {
-                        'xera': row.get('xERA', 0),
-                        'fip': row.get('FIP', 0),
-                        'xfip': row.get('xFIP', 0),
-                        'k_pct': row.get('K%', 0),
-                        'bb_pct': row.get('BB%', 0),
-                        'swstr_pct': row.get('SwStr%', 0),
-                        'csw_pct': row.get('CSW%', 0),
-                        'hard_hit_pct': row.get('HardHit%', 0),
-                        'barrel_pct': row.get('Barrel%', 0),
-                        'avg_ev': row.get('avgEV', 0),
-                        'whiff_pct': row.get('Whiff%', 0)
-                    }
-            
-            statcast_cache_date = today
-            print(f"Cached Statcast data for {len(statcast_cache)} pitchers")
-        
-    except Exception as e:
-        print(f"Error refreshing Statcast cache: {e}")
+    """Refresh Statcast data cache - DISABLED (FanGraphs blocks with 403)"""
+    print("[STREAMING] Statcast disabled - using basic stats only")
+    return
 
 
 async def get_statcast_metrics(pitcher_name):
@@ -865,25 +848,23 @@ async def post_streaming_board():
         # Sort and post
         viable_streamers.sort(key=lambda x: x['score'], reverse=True)
         
-        channel = bot.get_channel(STREAMING_CHANNEL_ID)
-        if not channel:
-            print(f"Channel {STREAMING_CHANNEL_ID} not found")
-            return
-        
         # Header
         et_tz = pytz.timezone('America/New_York')
-        today = datetime.now(et_tz).strftime('%A, %B %d, %Y')
+        if date_str:
+            display_date = datetime.strptime(date_str, '%Y-%m-%d').strftime('%A, %B %d, %Y')
+        else:
+            display_date = datetime.now(et_tz).strftime('%A, %B %d, %Y')
         
-        header = discord.Embed(
-            title="📊 Streaming Scout: Today's Board",
-            description=f"{today}\n{len(viable_streamers)} pitchers under {OWNERSHIP_THRESHOLD}% rostered",
-            color=0x1E88E5
-        )
-        await channel.send(embed=header)
+        header_embed = {
+            'title': f"📊 Streaming Scout: {display_date}",
+            'description': f"{len(viable_streamers)} pitchers under {OWNERSHIP_THRESHOLD}% rostered",
+            'color': 0x1E88E5
+        }
+        await post_discord_embed(header_embed)
         
         # Post top 10
         for streamer in viable_streamers[:10]:
-            await post_streamer_card(channel, streamer)
+            await post_streamer_card(streamer)
             await asyncio.sleep(2)
         
         print(f"Posted {min(len(viable_streamers), 10)} streaming recommendations")
@@ -892,7 +873,7 @@ async def post_streaming_board():
         print(f"Error in post_streaming_board: {e}")
 
 
-async def post_streamer_card(channel, streamer):
+async def post_streamer_card(streamer):
     """Post individual card"""
     try:
         data = streamer['data']
@@ -909,29 +890,30 @@ async def post_streamer_card(channel, streamer):
         tier, emoji = get_streaming_tier(score)
         league_fit = get_league_fit(score)
         
-        embed = discord.Embed(
-            title=f"{data['pitcher_name']} ({data['pitcher_hand']}) vs {data['opponent']}",
-            description=f"{emoji} **{tier}** • Start Score: {score}/100",
-            color=get_tier_color(tier)
-        )
+        embed = {
+            'title': f"{data['pitcher_name']} ({data['pitcher_hand']}) vs {data['opponent']}",
+            'description': f"{emoji} **{tier}** • Start Score: {score}/100",
+            'color': get_tier_color(tier),
+            'fields': []
+        }
         
         # Ownership + venue
         venue_line = f"{data['venue']}\n{park['type']}"
         if weather:
             venue_line += f"\n{weather.get('temp_f', 0)}°F, {weather.get('wind_desc', 'calm')}"
         
-        embed.add_field(name="📈 Ownership", value=f"{ownership}% ESPN", inline=True)
-        embed.add_field(name="🎯 Venue", value=venue_line, inline=True)
-        embed.add_field(name="🎯 League Fit", value=league_fit, inline=True)
+        embed['fields'].append({'name': '📈 Ownership', 'value': f"{ownership}% ESPN", 'inline': True})
+        embed['fields'].append({'name': '🎯 Venue', 'value': venue_line, 'inline': True})
+        embed['fields'].append({'name': '🎯 League Fit', 'value': league_fit, 'inline': True})
         
         # Stats
         stats_line = f"{stats.get('era', 0):.2f} ERA • {stats.get('whip', 0):.2f} WHIP\n{stats.get('k_per_9', 0):.1f} K/9 • {stats.get('k_bb_pct', 0):.1f}% K-BB"
-        embed.add_field(name="📊 Season Line", value=stats_line, inline=False)
+        embed['fields'].append({'name': '📊 Season Line', 'value': stats_line, 'inline': False})
         
         # Statcast
         if statcast:
             statcast_line = f"xERA: {statcast.get('xera', 0):.2f} • SwStr: {statcast.get('swstr_pct', 0):.1f}%\nHard-Hit: {statcast.get('hard_hit_pct', 0):.1f}% • Barrel: {statcast.get('barrel_pct', 0):.1f}%"
-            embed.add_field(name="⚡ Statcast Profile", value=statcast_line, inline=False)
+            embed['fields'].append({'name': '⚡ Statcast Profile', 'value': statcast_line, 'inline': False})
         
         # Recent form
         if stats.get('recent_starts'):
@@ -942,33 +924,33 @@ async def post_streamer_card(channel, streamer):
             
             if total_ip > 0:
                 recent_era = (total_er * 9) / total_ip
-                embed.add_field(
-                    name="🔥 Last 3 Starts",
-                    value=f"{total_ip:.1f} IP • {total_k} K • {recent_era:.2f} ERA",
-                    inline=False
-                )
+                embed['fields'].append({
+                    'name': '🔥 Last 3 Starts',
+                    'value': f"{total_ip:.1f} IP • {total_k} K • {recent_era:.2f} ERA",
+                    'inline': False
+                })
         
         # Lineup danger
         if lineup:
             elite = [h for h in lineup if h.get('ops', 0) > 0.850]
             k_prone = [h for h in lineup if h.get('k_pct', 0) > 25]
-            embed.add_field(
-                name="👥 Opposing Lineup",
-                value=f"{len(elite)} elite bats (.850+ OPS)\n{len(k_prone)} K-prone hitters (25%+ K)",
-                inline=False
-            )
+            embed['fields'].append({
+                'name': '👥 Opposing Lineup',
+                'value': f"{len(elite)} elite bats (.850+ OPS)\n{len(k_prone)} K-prone hitters (25%+ K)",
+                'inline': False
+            })
         
         # Score breakdown
-        embed.add_field(
-            name="📈 Score Breakdown",
-            value=f"Skill: {breakdown.get('skill', 0)}/30 • Form: {breakdown.get('form', 0)}/20\nMatchup: {breakdown.get('matchup', 0)}/25 • Park: {breakdown.get('park', 0)}/15",
-            inline=False
-        )
+        embed['fields'].append({
+            'name': '📈 Score Breakdown',
+            'value': f"Skill: {breakdown.get('skill', 0)}/30 • Form: {breakdown.get('form', 0)}/20\nMatchup: {breakdown.get('matchup', 0)}/25 • Park: {breakdown.get('park', 0)}/15",
+            'inline': False
+        })
         
         # Summary
-        embed.add_field(name="💭 Scout's Take", value=summary, inline=False)
+        embed['fields'].append({'name': '💭 Scout\'s Take', 'value': summary, 'inline': False})
         
-        await channel.send(embed=embed)
+        await post_discord_embed(embed)
         
     except Exception as e:
         print(f"Error posting card: {e}")
