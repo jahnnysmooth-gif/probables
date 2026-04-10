@@ -14,11 +14,6 @@ import json
 import math
 from anthropic import AsyncAnthropic
 import statsapi
-from pybaseball import statcast_pitcher, pitching_stats
-import pandas as pd
-from collections import defaultdict
-import warnings
-warnings.filterwarnings('ignore')
 
 # Bot setup
 intents = discord.Intents.default()
